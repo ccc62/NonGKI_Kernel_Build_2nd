@@ -1,0 +1,99 @@
+name: Build Xiaomi MIX4 Kernel (odin)
+
+on:
+  workflow_dispatch:
+    inputs:
+      root_choice:
+        description: '选择 Root 方案'
+        required: true
+        default: '1'
+        type: choice
+        options:
+          - '1'  # Kernelsu-next + susfs
+          - '2'  # Kernelsu Stable + susfs
+          - '3'  # SukiSU Ultra + susfs
+          - '4'  # MKSU + susfs
+
+  workflow_call:
+
+env:
+  DEVICE_NAME: "xiaomi_mix4"
+  DEVICE_CODENAME: "odin"
+  KERNEL_SOURCE: "https://github.com/ccc62/xiaomi_kernel_odin.git"
+  KERNEL_BRANCH: "muqianyong2"
+  PACK_METHOD: "Anykernel3"
+  AK3_SOURCE: "https://github.com/osm0sis/AnyKernel3.git"
+  AK3_BRANCH: "master"
+  ROOT_CHOICE: ${{ inputs.root_choice || '1' }}
+  PYTHON_VERSION: "3"
+  TZ: Asia/Shanghai
+
+jobs:
+  build-kernel:
+    name: Build MIX4 Kernel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: ccc62/xiaomi_kernel_odin
+          ref: muqianyong2
+
+      - name: Setup Environment
+        run: |
+          sudo apt update -y
+          sudo apt install -y git ccache curl wget zip unzip bc python3 python3-pip openjdk-17-jdk
+          # 添加 4GB Swap 防 OOM
+          sudo fallocate -l 4G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+          # 预热 ccache
+          ccache -M 10G
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=10G" >> $GITHUB_ENV
+
+      - name: Setup ccache
+        uses: actions/cache@v3
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('**/build.sh') }}
+          restore-keys: ccache-${{ runner.os }}-
+
+      - name: Export Environment Variables
+        run: |
+          echo "CURRENT_DIR=$(pwd)" >> $GITHUB_ENV
+          echo "KERNEL_DIR=$(pwd)" >> $GITHUB_ENV
+          echo "ANYKERNEL_DIR=$(pwd)/scripts/tools/AnyKernel3" >> $GITHUB_ENV
+          echo "IMAGE_DIR=$(pwd)/out/arch/arm64/boot/Image" >> $GITHUB_ENV
+
+      - name: Run Build Script (Non-Interactive)
+        env:
+          NON_INTERACTIVE: 1
+          ROOT_CHOICE: ${{ env.ROOT_CHOICE }}
+        run: |
+          chmod +x build.sh
+          ./build.sh -n
+
+      - name: Determine ZIP Name
+        id: zipname
+        run: |
+          HASH=$(git rev-parse --short=7 HEAD)
+          echo "zip_name=MIX4-5.4.289-g${HASH}.zip" >> $GITHUB_OUTPUT
+
+      - name: Upload Kernel ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.zipname.outputs.zip_name }}
+          path: ${{ github.workspace }}/${{ steps.zipname.outputs.zip_name }}
+          if-no-files-found: error
+
+      - name: Upload Build Log
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-build-log
+          path: ${{ github.workspace }}/kernel.log
