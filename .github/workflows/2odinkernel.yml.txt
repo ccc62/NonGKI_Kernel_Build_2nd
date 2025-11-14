@@ -1,4 +1,4 @@
-name: Build Xiaomi MIX4 Kernel (odin)
+name: 2Build Xiaomi MIX4 Kernel (odin)
 
 on:
   workflow_dispatch:
